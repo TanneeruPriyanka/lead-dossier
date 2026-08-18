@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lead Dossier | Tecsys</title>
+<script>
+// localStorage-backed drop-in replacement for Claude.ai's window.storage API,
+// so the tool works the same way outside the Claude.ai artifact sandbox.
+(function () {
+  const PREFIX = 'lead-dossier:';
+  window.storage = {
+    async get(key) {
+      const raw = localStorage.getItem(PREFIX + key);
+      if (raw === null) throw new Error('Key not found: ' + key);
+      return { key, value: raw, shared: false };
+    },
+    async set(key, value) {
+      localStorage.setItem(PREFIX + key, value);
+      return { key, value, shared: false };
+    },
+    async delete(key) {
+      localStorage.removeItem(PREFIX + key);
+      return { key, deleted: true, shared: false };
+    },
+    async list(prefix) {
+      const p = PREFIX + (prefix || '');
+      const keys = Object.keys(localStorage)
+        .filter(k => k.startsWith(p))
+        .map(k => k.slice(PREFIX.length));
+      return { keys, prefix: prefix || undefined, shared: false };
+    }
+  };
+})();
+</script>
+</head>
+<body>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  background: #E8E4DA;
+}
+body {
+  display: flex;
+  justify-content: center;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+#ld-root {
+  width: 100%;
+  max-width: 1200px;
+  height: calc(100vh - 48px);
+  --ink: #1B2430;
+  --paper: #FAF9F6;
+  --paper-alt: #F1EEE6;
+  --teal: #3D6B7D;
+  --teal-dark: #2A4A56;
+  --amber: #C17817;
+  --gray: #8A8F98;
+  --border: #D8D3C7;
+  --danger: #B5484D;
+  --good: #3F6B4A;
+
+  font-family: 'IBM Plex Sans', sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  min-height: 100%;
+  display: flex;
+  gap: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+#ld-root * { box-sizing: border-box; }
+
+/* ---------- Sidebar ---------- */
+.ld-sidebar {
+  width: 320px;
+  flex-shrink: 0;
+  background: var(--paper-alt);
+  border-right: 1px solid var(--border);
+  padding: 20px 18px;
+  overflow-y: auto;
+  max-height: 800px;
+}
+
+.ld-sidebar h2 {
+  font-family: 'IBM Plex Serif', serif;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gray);
+  margin: 0 0 10px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ld-block { margin-bottom: 22px; }
+
+.ld-tabs { display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
+.ld-tab-btn {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10.5px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  background: var(--paper);
+  color: var(--gray);
+  cursor: pointer;
+}
+.ld-tab-btn.active { background: var(--teal); color: white; border-color: var(--teal); }
+
+.ld-sector-hint {
+  font-size: 10.5px;
+  color: var(--gray);
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
+textarea.ld-sector-csv {
+  width: 100%;
+  min-height: 160px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  resize: vertical;
+}
+
+textarea.ld-rules, textarea.ld-icp {
+  width: 100%;
+  min-height: 110px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 12.5px;
+  line-height: 1.5;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.ld-save-hint { font-size: 10.5px; color: var(--gray); margin-top: 6px; }
+
+.ld-save-btn {
+  margin-top: 8px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11.5px;
+  background: var(--teal);
+  color: white;
+  border: none;
+  border-radius: 5px;
+  padding: 7px 10px;
+  cursor: pointer;
+  width: 100%;
+}
+.ld-save-btn:hover { background: var(--teal-dark); }
+
+/* ---------- Main ---------- */
+.ld-main { flex: 1; padding: 22px 26px; overflow-y: auto; max-height: 800px; }
+
+.ld-brand-row { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.ld-brand-mark {
+  font-family: 'IBM Plex Serif', serif;
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: 0.04em;
+  color: var(--teal-dark);
+}
+.ld-brand-divider { width: 1px; height: 18px; background: var(--border); }
+.ld-brand-sub { font-family: 'IBM Plex Serif', serif; font-weight: 600; font-size: 16px; color: var(--ink); }
+.ld-subtitle { font-size: 12.5px; color: var(--gray); margin: 0 0 18px 0; }
+
+.ld-input-bar {
+  display: flex; gap: 8px; margin-bottom: 22px;
+  position: sticky; top: 0; background: var(--paper); padding-bottom: 10px; z-index: 5;
+}
+.ld-input-bar input {
+  flex: 1; font-family: 'IBM Plex Mono', monospace; font-size: 13px;
+  padding: 11px 12px; border: 1.5px solid var(--ink); border-radius: 6px; background: white;
+}
+.ld-input-bar input:focus { outline: 2px solid var(--teal); outline-offset: 1px; }
+
+.ld-go-btn {
+  font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; font-weight: 600;
+  background: var(--ink); color: var(--paper); border: none; border-radius: 6px;
+  padding: 0 20px; cursor: pointer; letter-spacing: 0.03em;
+}
+.ld-go-btn:hover { background: var(--teal-dark); }
+.ld-go-btn:disabled { background: var(--gray); cursor: wait; }
+
+.ld-empty {
+  color: var(--gray); font-size: 13px; border: 1px dashed var(--border);
+  border-radius: 8px; padding: 30px; text-align: center;
+}
+
+.ld-error {
+  background: #fbeceb; border: 1px solid var(--danger); color: var(--danger);
+  border-radius: 6px; padding: 10px 12px; font-size: 12.5px; margin-bottom: 16px;
+}
+
+/* ---------- Dossier card ---------- */
+.ld-card {
+  position: relative; background: white; border: 1px solid var(--border);
+  border-left: 4px solid var(--teal); border-radius: 8px;
+  padding: 18px 20px 16px 20px; margin-bottom: 20px;
+  box-shadow: 0 1px 2px rgba(27,36,48,0.04);
+}
+
+.ld-stamp {
+  position: absolute; top: 14px; right: 18px;
+  font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; font-weight: 600;
+  letter-spacing: 0.05em; text-transform: uppercase; color: var(--amber);
+  border: 1.5px solid var(--amber); border-radius: 4px; padding: 3px 8px;
+  transform: rotate(-3deg);
+}
+
+.ld-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; margin-bottom: 6px; padding-right: 90px; }
+.ld-company { font-family: 'IBM Plex Serif', serif; font-size: 17px; font-weight: 600; margin: 0; }
+.ld-meta-line { font-size: 11px; color: var(--gray); margin-bottom: 12px; font-family: 'IBM Plex Mono', monospace; }
+.ld-meta-line a { color: var(--teal-dark); text-decoration: none; }
+.ld-meta-line a:hover { text-decoration: underline; }
+.ld-synopsis { font-size: 13px; line-height: 1.55; margin-bottom: 14px; color: #333; }
+
+.ld-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 16px; margin-bottom: 14px; }
+.ld-field label { display: block; font-family: 'IBM Plex Mono', monospace; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--gray); margin-bottom: 2px; }
+.ld-field .ld-val { font-size: 13px; font-weight: 500; }
+
+.ld-fit-box { background: var(--paper-alt); border-radius: 6px; padding: 10px 12px; margin-bottom: 14px; }
+.ld-fit-score { font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; color: white; display: inline-block; margin-bottom: 5px; }
+.fit-strong { background: var(--good); }
+.fit-moderate { background: #B5892E; }
+.fit-weak { background: var(--danger); }
+.fit-unclear { background: var(--gray); }
+.fit-competitor { background: var(--ink); }
+.ld-fit-rationale { font-size: 12.5px; line-height: 1.5; }
+
+.ld-sdr-line { display: flex; align-items: center; gap: 8px; font-size: 13px; border-top: 1px solid var(--border); padding-top: 12px; flex-wrap: wrap; }
+.ld-sdr-badge { font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; background: var(--teal); color: white; padding: 3px 9px; border-radius: 4px; }
+.ld-sdr-badge.ld-unassigned { background: var(--danger); }
+
+.ld-card-actions { margin-top: 12px; display: flex; gap: 8px; }
+.ld-copy-btn { font-family: 'IBM Plex Mono', monospace; font-size: 11px; background: none; border: 1px solid var(--gray); border-radius: 5px; padding: 5px 10px; cursor: pointer; color: var(--ink); }
+.ld-copy-btn:hover { border-color: var(--ink); }
+
+.ld-notes { font-size: 11px; color: var(--gray); font-style: italic; margin-top: 10px; }
+
+.ld-loading-line {
+  font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: var(--teal-dark);
+  padding: 14px; border: 1px dashed var(--teal); border-radius: 8px; margin-bottom: 16px;
+}
+</style>
+
+<div id="ld-root">
+  <div class="ld-sidebar">
+    <div class="ld-block">
+      <h2>Sector &rarr; State &rarr; SDR</h2>
+      <div class="ld-sector-hint">Edit each sector's list below as <b>Abbr,State,SDR</b> (or <b>Abbr,State,Territory,SDR</b>). One state per line. Paste directly from your sheet.</div>
+      <div class="ld-tabs" id="ld-sector-tabs"></div>
+      <textarea class="ld-sector-csv" id="ld-sector-csv"></textarea>
+    </div>
+    <div class="ld-block">
+      <h2>HubSpot Industry Options</h2>
+      <div class="ld-sector-hint">Exact picklist values from the HubSpot Industry property. Comma-separated.</div>
+      <textarea class="ld-rules" id="ld-hubspot-industries" style="min-height:44px;" placeholder="Distribution, Healthcare, Retail, Other"></textarea>
+    </div>
+    <div class="ld-block">
+      <h2>Industry &rarr; SDR Table</h2>
+      <div class="ld-sector-hint">Which SDR table (above) each HubSpot Industry value should use. Format: <b>Industry,SDR Table Name</b></div>
+      <textarea class="ld-rules" id="ld-industry-map" style="min-height:80px;"></textarea>
+    </div>
+    <div class="ld-block">
+      <h2>Industry &rarr; Vertical &rarr; Sub-Vertical</h2>
+      <div class="ld-sector-hint">Exact HubSpot taxonomy. Indent with 2 spaces for Vertical, 4 spaces for Sub-Vertical.</div>
+      <textarea class="ld-sector-csv" id="ld-taxonomy" style="min-height:220px;"></textarea>
+    </div>
+    <div class="ld-block">
+      <h2>Type Options (company-level)</h2>
+      <div class="ld-sector-hint">Exact HubSpot picklist. "Customer" is excluded on purpose -- that's set internally when a deal exists. One per line.</div>
+      <textarea class="ld-sector-csv" id="ld-lead-statuses" style="min-height:160px;"></textarea>
+    </div>
+    <div class="ld-block">
+      <h2>Sector Classification Rules</h2>
+      <textarea class="ld-rules" id="ld-rules" placeholder="How should the model decide which HubSpot Industry a company belongs to?"></textarea>
+    </div>
+    <div class="ld-block">
+      <h2>Tecsys ICP / Fit Criteria</h2>
+      <textarea class="ld-icp" id="ld-icp" placeholder="Describe what a strong-fit account looks like for Tecsys."></textarea>
+    </div>
+    <div class="ld-block">
+      <h2>Known Competitors</h2>
+      <div class="ld-sector-hint">Comma-separated. If a researched company IS one of these (or clearly sells competing WMS/ERP/supply-chain software), it gets flagged as a Competitor instead of scored for fit.</div>
+      <textarea class="ld-rules" id="ld-competitors" style="min-height:70px;"></textarea>
+    </div>
+    <div class="ld-block">
+      <h2>Non-NA SDR Pool (round robin)</h2>
+      <div class="ld-sector-hint">No state-level SDR table exists for Europe or Rest-of-World yet -- leads with HQ outside North America get split round-robin across this list instead of going unassigned. Comma-separated.</div>
+      <textarea class="ld-rules" id="ld-nonna-pool" style="min-height:50px;"></textarea>
+    </div>
+    <button class="ld-save-btn" id="ld-save-config">Save config</button>
+    <div class="ld-save-hint" id="ld-save-hint">&nbsp;</div>
+  </div>
+
+  <div class="ld-main">
+    <div class="ld-brand-row">
+      <span class="ld-brand-mark">TECSYS</span>
+      <span class="ld-brand-divider"></span>
+      <span class="ld-brand-sub">Lead Dossier</span>
+    </div>
+    <p class="ld-subtitle">Paste a company website or LinkedIn URL. Get industry, vertical, fit, Type, and the right SDR by sector + state — ready for HubSpot.</p>
+
+    <div class="ld-input-bar">
+      <input type="text" id="ld-url-input" placeholder="https://www.example.com  or  linkedin.com/company/example" />
+      <button class="ld-go-btn" id="ld-go-btn">Research</button>
+    </div>
+
+    <div id="ld-error-slot"></div>
+    <div id="ld-loading-slot"></div>
+    <div id="ld-results"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const SECTOR_DEFAULTS = {
+    "General Wholesale/Retail/Other": `AK,Alaska,Annette Langevin
+AL,Alabama,Cal Green
+AR,Arkansas,Cal Green
+AZ,Arizona,Annette Langevin
+CA,California,Annette Langevin
+CO,Colorado,Annette Langevin
+CT,Connecticut,Cal Green
+DE,Delaware,Cal Green
+DC,District of Columbia,Cal Green
+FL,Florida,Cal Green
+GA,Georgia,Cal Green
+HI,Hawaii,Annette Langevin
+ID,Idaho,Annette Langevin
+IL,Illinois,Cal Green
+IN,Indiana,Cal Green
+IA,Iowa,Cal Green
+KS,Kansas,Cal Green
+KY,Kentucky,Cal Green
+LA,Louisiana,Cal Green
+ME,Maine,Cal Green
+MD,Maryland,Cal Green
+MA,Massachusetts,Cal Green
+MI,Michigan,Cal Green
+MN,Minnesota,Cal Green
+MS,Mississippi,Cal Green
+MO,Missouri,Cal Green
+MT,Montana,Annette Langevin
+NE,Nebraska,Annette Langevin
+NV,Nevada,Annette Langevin
+NH,New Hampshire,Cal Green
+NJ,New Jersey,Cal Green
+NM,New Mexico,Annette Langevin
+NY,New York,Cal Green
+NC,North Carolina,Cal Green
+ND,North Dakota,Annette Langevin
+OH,Ohio,Cal Green
+OK,Oklahoma,Cal Green
+OR,Oregon,Annette Langevin
+PA,Pennsylvania,Cal Green
+RI,Rhode Island,Cal Green
+SC,South Carolina,Cal Green
+SD,South Dakota,Annette Langevin
+TN,Tennessee,Cal Green
+TX,Texas,Cal Green
+UT,Utah,Annette Langevin
+VT,Vermont,Cal Green
+VA,Virginia,Cal Green
+WA,Washington,Annette Langevin
+WV,West Virginia,Cal Green
+WI,Wisconsin,Cal Green
+WY,Wyoming,Annette Langevin
+AB,Alberta,Annette Langevin
+BC,British Columbia,Annette Langevin
+MB,Manitoba,Annette Langevin
+NFL,Newfoundland,Annette Langevin
+NB,New Brunswick,Annette Langevin
+NS,Nova Scotia,Annette Langevin
+ON,Ontario,Annette Langevin
+PQ,Quebec,Annette Langevin
+PEI,PEI,Annette Langevin
+SK,Saskatchewan,Annette Langevin`,
+    "Distribution": `AK,Alaska,Annette Langevin
+AL,Alabama,Cal Green
+AR,Arkansas,Cal Green
+AZ,Arizona,Annette Langevin
+CA,California,Annette Langevin
+CO,Colorado,Annette Langevin
+CT,Connecticut,Cal Green
+DE,Delaware,Cal Green
+DC,District of Columbia,Cal Green
+FL,Florida,Cal Green
+GA,Georgia,Cal Green
+HI,Hawaii,Annette Langevin
+ID,Idaho,Annette Langevin
+IL,Illinois,Cal Green
+IN,Indiana,Cal Green
+IA,Iowa,Cal Green
+KS,Kansas,Cal Green
+KY,Kentucky,Cal Green
+LA,Louisiana,Cal Green
+ME,Maine,Cal Green
+MD,Maryland,Cal Green
+MA,Massachusetts,Cal Green
+MI,Michigan,Cal Green
+MN,Minnesota,Cal Green
+MS,Mississippi,Cal Green
+MO,Missouri,Cal Green
+MT,Montana,Annette Langevin
+NE,Nebraska,Annette Langevin
+NV,Nevada,Annette Langevin
+NH,New Hampshire,Cal Green
+NJ,New Jersey,Cal Green
+NM,New Mexico,Annette Langevin
+NY,New York,Cal Green
+NC,North Carolina,Cal Green
+ND,North Dakota,Annette Langevin
+OH,Ohio,Cal Green
+OK,Oklahoma,Cal Green
+OR,Oregon,Annette Langevin
+PA,Pennsylvania,Cal Green
+RI,Rhode Island,Cal Green
+SC,South Carolina,Cal Green
+SD,South Dakota,Annette Langevin
+TN,Tennessee,Cal Green
+TX,Texas,Cal Green
+UT,Utah,Annette Langevin
+VT,Vermont,Cal Green
+VA,Virginia,Cal Green
+WA,Washington,Annette Langevin
+WV,West Virginia,Cal Green
+WI,Wisconsin,Cal Green
+WY,Wyoming,Annette Langevin
+AB,Alberta,Annette Langevin
+BC,British Columbia,Annette Langevin
+MB,Manitoba,Annette Langevin
+NFL,Newfoundland,Annette Langevin
+NB,New Brunswick,Annette Langevin
+NS,Nova Scotia,Annette Langevin
+ON,Ontario,Annette Langevin
+PQ,Quebec,Annette Langevin
+PEI,PEI,Annette Langevin
+SK,Saskatchewan,Annette Langevin`,
+    "Healthcare": `AL,Alabama,SE,Stephen Lemish
+AK,Alaska,West,Cindy Lowell
+AZ,Arizona,West,Cindy Lowell
+AR,Arkansas,MW,Cindy Lowell
+CA,California,West,Cindy Lowell
+CO,Colorado,West,Cindy Lowell
+CT,Connecticut,NE,Cindy Lowell
+DE,Delaware,NE,Stephen Lemish
+DC,District of Columbia,NE,Stephen Lemish
+FL,Florida,SE,Stephen Lemish
+GA,Georgia,SE,Stephen Lemish
+HI,Hawaii,West,Cindy Lowell
+ID,Idaho,West,Cindy Lowell
+IL,Illinois,MW,Cindy Lowell
+IN,Indiana,MW,Cindy Lowell
+IA,Iowa,MW,Cindy Lowell
+KS,Kansas,MW,Cindy Lowell
+KY,Kentucky,SE,Stephen Lemish
+LA,Louisiana,MW,Cindy Lowell
+ME,Maine,NE,Stephen Lemish
+MD,Maryland,NE,Stephen Lemish
+MA,Massachusetts,NE,Stephen Lemish
+MI,Michigan,NE,Cindy Lowell
+MN,Minnesota,MW,Cindy Lowell
+MS,Mississippi,MW,Stephen Lemish
+MO,Missouri,MW,Cindy Lowell
+MT,Montana,West,Cindy Lowell
+NE,Nebraska,MW,Cindy Lowell
+NV,Nevada,West,Cindy Lowell
+NH,New Hampshire,NE,Stephen Lemish
+NJ,New Jersey,NE,Stephen Lemish
+NM,New Mexico,West,Cindy Lowell
+NY,New York,NE,Stephen Lemish
+NC,North Carolina,SE,Stephen Lemish
+ND,North Dakota,MW,Cindy Lowell
+OH,Ohio,NE,Cindy Lowell
+OK,Oklahoma,MW,Cindy Lowell
+OR,Oregon,West,Cindy Lowell
+PA,Pennsylvania,NE,Stephen Lemish
+RI,Rhode Island,NE,Stephen Lemish
+SC,South Carolina,SE,Stephen Lemish
+SD,South Dakota,MW,Cindy Lowell
+TN,Tennessee,SE,Stephen Lemish
+TX,Texas,MW,Cindy Lowell
+UT,Utah,West,Cindy Lowell
+VT,Vermont,NE,Stephen Lemish
+VA,Virginia,SE,Stephen Lemish
+WA,Washington,West,Cindy Lowell
+WV,West Virginia,SE,Stephen Lemish
+WI,Wisconsin,MW,Cindy Lowell
+WY,Wyoming,West,Cindy Lowell
+AB,Alberta,,Stephen Lemish
+BC,British Columbia,,Stephen Lemish
+MB,Manitoba,,Stephen Lemish
+NFL,Newfoundland,,Stephen Lemish
+NB,New Brunswick,,Stephen Lemish
+NS,Nova Scotia,,Stephen Lemish
+ON,Ontario,,Stephen Lemish
+PEI,Prince Edward Is.,,Stephen Lemish
+PQ,Quebec,,Stephen Lemish
+SK,Saskatchewan,,Stephen Lemish`
+  };
+
+  const DEFAULT_RULES = `- CRITICAL DISAMBIGUATION -- Healthcare vs. Distribution's "Medical & Life Science" vertical: these are easy to mix up, be careful.
+  -> industry = "Healthcare" ONLY if the company itself delivers patient care or operates as a healthcare provider/facility -- hospitals, health systems, IDNs, clinics, urgent care centers, standalone hospitals.
+  -> industry = "Distribution" (vertical = "Medical & Life Science") if the company distributes, manufactures-and-distributes, or supplies medical/pharma/healthcare products WITHOUT itself providing patient care -- e.g. a healthcare products distributor, a pharmaceutical distributor or 3PL, a digital pharmacy, a medical device manufacturer, a pharma manufacturer, a veterinarian supplies distributor. These sell INTO healthcare, they are not a care provider themselves -- do not misclassify them as "Healthcare" just because the word "medical," "pharma," or "healthcare" appears in their business description.
+  -> Ask: "does this company treat patients / operate care facilities?" If yes -> Healthcare. If no, but they make or move medical/pharma product -> Distribution / Medical & Life Science, and pick the specific sub-vertical that matches.
+- If the company's core business is third-party/wholesale distribution or logistics of non-medical goods -> industry = "Distribution"
+- If the company manufactures products AND also distributes/sells those products themselves (i.e. they are a manufacturer-distributor, not purely a manufacturer with third-party distribution) -> industry = "Distribution". Do NOT default these to "Other" -- look closely at the taxonomy for a fitting vertical/sub-vertical (e.g. a company manufacturing and distributing its own medical devices fits "Medical Device Manufacturer" under Medical & Life Science; one manufacturing and distributing its own industrial/building products fits under Industrial & Building Materials; automotive/heavy equipment manufacturer-distributors fit under Automotive, Heavy Equipment & Parts).
+- CLOSEST-FIT RULE -- if a company makes and sells/ships a physical product but doesn't cleanly match any named vertical or sub-vertical (e.g. a networking/electronics hardware manufacturer like Zyxel -- not a healthcare, retail, or obviously "distribution" company by name, but it does manufacture and ship physical product through channel/distribution), still classify it as "Distribution" rather than "Other", and use Vertical = "General Wholesale" / Sub-Vertical = "General" as the closest-fit catch-all when nothing more specific applies. Walk the full taxonomy below and pick the nearest reasonable match before ever settling on "Other" -- "Other" should be a rare outcome, not a default for anything unfamiliar.
+- If the company is primarily a retailer (sells to consumers, brick-and-mortar or e-commerce) -> industry = "Retail"
+- Reserve "Other" narrowly -- only for companies that are genuinely unrelated to distribution/wholesale/healthcare/retail (e.g. a media company, a B2B lead-gen/data broker, a pure software/services company with no physical product at all, or anything with truly no reasonable taxonomy fit even at the "General Wholesale / General" catch-all level).
+- Note: the Healthcare SDR table may currently mirror Distribution -- if the lookup looks off, say so in confidence_notes rather than guessing an SDR.`;
+
+  const DEFAULT_ICP = "Mid-size to large companies (200+ employees) in complex, high-volume supply chain, distribution, healthcare, or retail environments who need warehouse management, order management, or supply chain execution software. Strong fit if they show signs of outgrowing manual or legacy WMS/ERP processes.";
+
+  const DEFAULT_COMPETITORS = "SAP, Oracle, Manhattan Associates, Blue Yonder, Infor, Korber, Kinaxis, Epicor, Microsoft Dynamics, NetSuite, HighJump, Made4net, Softeon, Deposco, PTC, JDA Software";
+
+  // No dedicated Europe/Rest-of-World SDR-by-state table exists yet -- these leads split manually
+  // across the existing SDR roster via round robin instead of going unassigned.
+  const DEFAULT_NON_NA_SDR_POOL = "Annette Langevin, Cal Green, Cindy Lowell, Stephen Lemish";
+
+  // Exact HubSpot Industry picklist values (contact-level)
+  const DEFAULT_HUBSPOT_INDUSTRIES = ["Distribution", "Healthcare", "Retail", "Other"];
+
+  // Which SDR table (from SECTOR_DEFAULTS) each HubSpot Industry value should use for lookup
+  const DEFAULT_INDUSTRY_TO_SDR_TABLE = `Distribution,Distribution
+Healthcare,Healthcare
+Retail,General Wholesale/Retail/Other
+Other,General Wholesale/Retail/Other`;
+
+  // Industry -> Vertical -> Sub-Vertical taxonomy, exactly as it exists in HubSpot.
+  // Indentation: Industry (no indent) / Vertical (2 spaces) / Sub-Vertical (4 spaces)
+  const DEFAULT_TAXONOMY = `Distribution
+  Automotive, Heavy Equipment & Parts
+    CAT Dealers
+    Other Machinery & Parts
+    Automotive
+    Heavy Equipment
+    Heavy Trucks
+  Industrial & Building Materials
+    Electrical
+    Plumbing and HVAC
+    Other Industrial
+    Building Materials
+    Multiline Distributors
+  Medical & Life Science
+    Healthcare Products Distributor
+    Pharmaceuticals (Distribution)
+    Pharmaceuticals 3PL
+    Digital Pharmacy
+    Medical Device Manufacturer
+    Pharma Manufacturer
+    Pharma & Med Device Distributors
+    Veterinarian Supplies Distributors
+  General Wholesale
+    General
+    Retail Products Distributor
+    3PL
+Healthcare
+  Healthcare
+    Large IDN
+    Small-Medium IDN/Standalone Hospital
+    Clinic/Urgent Care
+Retail
+  Retail
+    Retail
+Other
+  Other
+    Other`;
+
+  // Exact HubSpot Type picklist (company-level). "Customer" is excluded from what the model may
+  // suggest since it's set internally based on whether an opportunity/deal exists on the record.
+  const DEFAULT_TYPE_OPTIONS = [
+    "Consultant", "Influencer", "Investor", "Other", "Partner", "Press", "Prospect", "Reseller",
+    "Supplier", "Vendor", "Previous Customer", "Out of Geo", "Media", "Potential Partner", "Partner Prospect", "Competitor"
+  ];
+
+  let config = {
+    sectors: Object.assign({}, SECTOR_DEFAULTS),
+    rules: DEFAULT_RULES,
+    icp: DEFAULT_ICP,
+    competitors: DEFAULT_COMPETITORS,
+    nonNaSdrPool: DEFAULT_NON_NA_SDR_POOL,
+    hubspotIndustries: DEFAULT_HUBSPOT_INDUSTRIES.slice(),
+    industryToSdrTable: DEFAULT_INDUSTRY_TO_SDR_TABLE,
+    taxonomy: DEFAULT_TAXONOMY,
+    typeOptions: DEFAULT_TYPE_OPTIONS.slice()
+  };
+  let dossiers = [];
+  let activeSector = Object.keys(SECTOR_DEFAULTS)[0];
+
+  const $ = (id) => document.getElementById(id);
+
+  async function loadConfig() {
+    try {
+      const res = await window.storage.get('config', false);
+      if (res && res.value) {
+        const parsed = JSON.parse(res.value);
+        if (parsed.sectors) config.sectors = parsed.sectors;
+        if (parsed.rules) config.rules = parsed.rules;
+        if (parsed.icp) config.icp = parsed.icp;
+        if (parsed.competitors) config.competitors = parsed.competitors;
+        if (parsed.nonNaSdrPool) config.nonNaSdrPool = parsed.nonNaSdrPool;
+        if (parsed.hubspotIndustries) config.hubspotIndustries = parsed.hubspotIndustries;
+        if (parsed.industryToSdrTable) config.industryToSdrTable = parsed.industryToSdrTable;
+        if (parsed.taxonomy) config.taxonomy = parsed.taxonomy;
+        if (parsed.typeOptions) config.typeOptions = parsed.typeOptions;
+      }
+    } catch (e) { /* defaults */ }
+    renderTabs();
+    selectSector(Object.keys(config.sectors)[0]);
+    $('ld-rules').value = config.rules;
+    $('ld-icp').value = config.icp;
+    $('ld-competitors').value = config.competitors;
+    $('ld-nonna-pool').value = config.nonNaSdrPool;
+    $('ld-hubspot-industries').value = config.hubspotIndustries.join(', ');
+    $('ld-industry-map').value = config.industryToSdrTable;
+    $('ld-taxonomy').value = config.taxonomy;
+    $('ld-lead-statuses').value = config.typeOptions.join('\n');
+  }
+
+  async function loadDossiers() {
+    try {
+      const res = await window.storage.get('dossiers', false);
+      if (res && res.value) dossiers = JSON.parse(res.value);
+    } catch (e) { dossiers = []; }
+    renderDossiers();
+  }
+
+  function renderTabs() {
+    const wrap = $('ld-sector-tabs');
+    wrap.innerHTML = '';
+    Object.keys(config.sectors).forEach(name => {
+      const btn = document.createElement('button');
+      btn.className = 'ld-tab-btn' + (name === activeSector ? ' active' : '');
+      btn.textContent = name;
+      btn.onclick = () => { stashCurrentSectorText(); selectSector(name); };
+      wrap.appendChild(btn);
+    });
+  }
+
+  function stashCurrentSectorText() {
+    if (activeSector) config.sectors[activeSector] = $('ld-sector-csv').value;
+  }
+
+  function selectSector(name) {
+    activeSector = name;
+    $('ld-sector-csv').value = config.sectors[name] || '';
+    renderTabs();
+  }
+
+  async function saveConfig() {
+    stashCurrentSectorText();
+    config.rules = $('ld-rules').value;
+    config.icp = $('ld-icp').value;
+    config.competitors = $('ld-competitors').value;
+    config.nonNaSdrPool = $('ld-nonna-pool').value;
+    config.hubspotIndustries = $('ld-hubspot-industries').value.split(',').map(s => s.trim()).filter(Boolean);
+    config.industryToSdrTable = $('ld-industry-map').value;
+    config.taxonomy = $('ld-taxonomy').value;
+    config.typeOptions = $('ld-lead-statuses').value.split('\n').map(s => s.trim()).filter(Boolean);
+    try {
+      await window.storage.set('config', JSON.stringify(config), false);
+      $('ld-save-hint').textContent = 'Saved.';
+      setTimeout(() => { $('ld-save-hint').innerHTML = '&nbsp;'; }, 1800);
+    } catch (e) {
+      $('ld-save-hint').textContent = 'Could not save -- try again.';
+    }
+  }
+
+  async function persistDossiers() {
+    try { await window.storage.set('dossiers', JSON.stringify(dossiers.slice(0, 50)), false); }
+    catch (e) { /* non-fatal */ }
+  }
+
+  function escapeHtml(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  $('ld-save-config').onclick = saveConfig;
+
+  function parseSectorCsv(text) {
+    const rows = {};
+    (text || '').split('\n').forEach(line => {
+      const parts = line.split(',').map(p => p.trim());
+      if (parts.length < 2) return;
+      const abbr = parts[0].toUpperCase();
+      const stateName = parts.length >= 3 ? parts[1].toUpperCase() : null;
+      const sdr = parts[parts.length - 1];
+      if (abbr && sdr) rows[abbr] = sdr;
+      if (stateName && sdr) rows[stateName] = sdr;
+    });
+    return rows;
+  }
+
+  function parseTaxonomy(text) {
+    const tree = {};
+    let currentIndustry = null, currentVertical = null;
+    (text || '').split('\n').forEach(raw => {
+      if (!raw.trim()) return;
+      const indent = raw.match(/^ */)[0].length;
+      const label = raw.trim();
+      if (indent === 0) {
+        currentIndustry = label;
+        tree[currentIndustry] = {};
+        currentVertical = null;
+      } else if (indent <= 3 && currentIndustry) {
+        currentVertical = label;
+        tree[currentIndustry][currentVertical] = [];
+      } else if (currentIndustry && currentVertical) {
+        tree[currentIndustry][currentVertical].push(label);
+      }
+    });
+    return tree;
+  }
+
+  function resolveSdrTableName(industry) {
+    const lines = (config.industryToSdrTable || '').split('\n');
+    for (const line of lines) {
+      const parts = line.split(',').map(p => p.trim());
+      if (parts.length >= 2 && parts[0].toLowerCase() === String(industry || '').toLowerCase()) {
+        return parts.slice(1).join(',');
+      }
+    }
+    return null;
+  }
+
+  function findSdr(industry, stateAbbr) {
+    const tableName = resolveSdrTableName(industry);
+    if (!tableName || !stateAbbr) return null;
+    const csv = config.sectors[tableName];
+    if (!csv) return null;
+    const rows = parseSectorCsv(csv);
+    const cleanAbbr = String(stateAbbr).replace(/[^A-Za-z]/g, '').toUpperCase();
+    if (rows[cleanAbbr]) return rows[cleanAbbr];
+    const cleanName = String(stateAbbr).trim().toUpperCase();
+    return rows[cleanName] || null;
+  }
+
+  function fitClass(score) {
+    const s = (score || '').toLowerCase();
+    if (s === 'strong') return 'fit-strong';
+    if (s === 'moderate') return 'fit-moderate';
+    if (s === 'weak') return 'fit-weak';
+    if (s === 'competitor') return 'fit-competitor';
+    return 'fit-unclear';
+  }
+
+  function renderDossiers() {
+    const wrap = $('ld-results');
+    if (!dossiers.length) {
+      wrap.innerHTML = '<div class="ld-empty">No leads researched yet. Paste a website or LinkedIn URL above to start the first dossier.</div>';
+      return;
+    }
+    wrap.innerHTML = dossiers.map((d, idx) => cardHtml(d, idx)).join('');
+    dossiers.forEach((d, idx) => {
+      const btn = document.getElementById('ld-copy-' + idx);
+      if (btn) btn.onclick = () => copyDossier(d);
+    });
+  }
+
+  async function nextNonNaSdr() {
+    const pool = (config.nonNaSdrPool || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!pool.length) return null;
+    let idx = 0;
+    try {
+      const res = await window.storage.get('non-na-rr-index', false);
+      idx = res && res.value ? (parseInt(res.value, 10) || 0) : 0;
+    } catch (e) { idx = 0; }
+    const sdr = pool[idx % pool.length];
+    try { await window.storage.set('non-na-rr-index', String(idx + 1), false); } catch (e) { /* non-fatal */ }
+    return sdr;
+  }
+
+  function validateAndFixTaxonomy(d, taxonomyTree, hubspotIndustries) {
+    const notes = [];
+
+    // --- Industry ---
+    const rawIndustry = d.industry || '';
+    let industry = hubspotIndustries.find(i => i.toLowerCase() === rawIndustry.toLowerCase());
+    if (!industry) {
+      industry = hubspotIndustries.find(i => taxonomyTree[i]) || hubspotIndustries[0];
+      notes.push(`Industry "${rawIndustry}" wasn't an exact HubSpot value -- corrected to "${industry}".`);
+    }
+    d.industry = industry;
+
+    // --- Vertical (nested under the resolved industry) ---
+    const verticalMap = taxonomyTree[industry] || {};
+    const verticalKeys = Object.keys(verticalMap);
+    const rawVertical = d.vertical || '';
+    let vertical = verticalKeys.find(v => v.toLowerCase() === rawVertical.toLowerCase());
+    if (!vertical) {
+      vertical = verticalKeys.find(v =>
+        rawVertical.toLowerCase().includes(v.toLowerCase()) || v.toLowerCase().includes(rawVertical.toLowerCase())
+      );
+    }
+    if (!vertical && verticalKeys.length) {
+      // Prefer a generic/general-sounding vertical as the closest-fit catch-all over an arbitrary first entry
+      vertical = verticalKeys.find(v => /general/i.test(v)) || verticalKeys[0];
+      notes.push(`Vertical "${rawVertical}" wasn't in the ${industry} taxonomy -- corrected to closest available "${vertical}".`);
+    } else if (vertical && vertical.toLowerCase() !== rawVertical.toLowerCase()) {
+      notes.push(`Vertical corrected from "${rawVertical}" to exact value "${vertical}".`);
+    }
+    d.vertical = vertical || rawVertical;
+
+    // --- Sub-Vertical (nested under the resolved vertical) ---
+    const subOptions = (vertical && verticalMap[vertical]) || [];
+    const rawSub = d.sub_vertical || '';
+    let sub = subOptions.find(s => s.toLowerCase() === rawSub.toLowerCase());
+    if (!sub) {
+      sub = subOptions.find(s =>
+        rawSub.toLowerCase().includes(s.toLowerCase()) || s.toLowerCase().includes(rawSub.toLowerCase())
+      );
+    }
+    if (!sub && subOptions.length) {
+      sub = subOptions.find(s => /general/i.test(s)) || subOptions[0];
+      notes.push(`Sub-vertical "${rawSub}" wasn't in the ${vertical} taxonomy -- corrected to closest available "${sub}".`);
+    } else if (sub && sub.toLowerCase() !== rawSub.toLowerCase()) {
+      notes.push(`Sub-vertical corrected from "${rawSub}" to exact value "${sub}".`);
+    }
+    d.sub_vertical = sub || rawSub;
+
+    if (notes.length) {
+      d.confidence_notes = (d.confidence_notes ? d.confidence_notes + ' ' : '') + notes.join(' ');
+    }
+    return d;
+  }
+
+  async function resolveAssignment(d) {
+    const isCompetitor = ((d.tecsys_fit && d.tecsys_fit.score) || '').toLowerCase() === 'competitor';
+    if (isCompetitor) return { sdr: null, note: 'not applicable -- competitor' };
+
+    // Try the state/industry lookup FIRST, regardless of how the model phrased "region"
+    // (it may say "USA", "United States", "Canada", etc. instead of literally "North America").
+    // If the state_abbr resolves to a real entry in our tables, that's a stronger signal than the region label.
+    const naSdr = findSdr(d.industry, d.state_abbr);
+    if (naSdr) return { sdr: naSdr, note: null };
+
+    const region = (d.region || '').toLowerCase();
+    const looksNorthAmerica = region.includes('north america') || region.includes('usa')
+      || region.includes('united states') || region.includes('canada') || !!d.state_abbr;
+
+    if (looksNorthAmerica && d.state_abbr) {
+      // Had a state_abbr but no table match -- genuinely unmapped, not a region misdetection.
+      return { sdr: null, note: `unmapped -- check "${d.industry || '?'}" / "${d.state_abbr || '?'}"` };
+    }
+
+    if (region.includes('europe')) {
+      const sdr = await nextNonNaSdr();
+      return sdr
+        ? { sdr, note: 'assigned round-robin (no Europe SDR table yet)' }
+        : { sdr: null, note: 'no non-NA SDR pool configured' };
+    }
+
+    // Rest of World / Out of Geo -- still assign via round robin rather than leaving unassigned.
+    const rowSdr = await nextNonNaSdr();
+    return rowSdr
+      ? { sdr: rowSdr, note: 'assigned round-robin (Out of Geo -- no dedicated table)' }
+      : { sdr: null, note: 'Rest of World -- no non-NA SDR pool configured' };
+  }
+
+  function cardHtml(d, idx) {
+    const isCompetitor = ((d.tecsys_fit && d.tecsys_fit.score) || '').toLowerCase() === 'competitor';
+    const sdrBadge = d.assigned_sdr
+      ? `<span class="ld-sdr-badge">${escapeHtml(d.assigned_sdr)}</span>`
+      : `<span class="ld-sdr-badge ${isCompetitor ? '' : 'ld-unassigned'}" style="${isCompetitor ? 'background:var(--ink);' : ''}">${escapeHtml(d.assignment_note || 'unassigned')}</span>`;
+    return `
+      <div class="ld-card" ${isCompetitor ? 'style="border-left-color:var(--ink);"' : ''}>
+        ${isCompetitor ? '<span class="ld-stamp" style="color:white;background:var(--ink);border-color:var(--ink);top:-1px;right:auto;left:14px;border-radius:0 0 5px 5px;transform:none;">COMPETITOR</span>' : ''}
+        <span class="ld-stamp" style="${isCompetitor ? 'top:14px;' : ''}">${escapeHtml(d.suggested_type || 'Prospect')}</span>
+        <div class="ld-card-head">
+          <p class="ld-company">${escapeHtml(d.company_name || 'Unknown company')}</p>
+        </div>
+        <div class="ld-meta-line">
+          ${d.website_url ? `<a href="${escapeHtml(d.website_url)}" target="_blank" rel="noopener">${escapeHtml(d.website_url)}</a>` : ''}
+          ${d.website_url && d.linkedin_url ? ' &middot; ' : ''}
+          ${d.linkedin_url ? `<a href="${escapeHtml(d.linkedin_url)}" target="_blank" rel="noopener">${escapeHtml(d.linkedin_url)}</a>` : (d.linkedin_url === '' ? '<span style="color:var(--danger)">LinkedIn not found</span>' : '')}
+          &middot; researched ${escapeHtml(d.timestamp || '')}
+        </div>
+        <p class="ld-synopsis">${escapeHtml(d.synopsis || '')}</p>
+        <div class="ld-grid">
+          <div class="ld-field"><label>Industry</label><div class="ld-val">${escapeHtml(d.industry || '\u2014')}</div></div>
+          <div class="ld-field"><label>Vertical</label><div class="ld-val">${escapeHtml(d.vertical || '\u2014')}</div></div>
+          <div class="ld-field"><label>Sub-vertical</label><div class="ld-val">${escapeHtml(d.sub_vertical || '\u2014')}</div></div>
+          <div class="ld-field"><label>HQ Location</label><div class="ld-val">${escapeHtml(d.hq_location || '\u2014')}</div></div>
+          <div class="ld-field"><label>Region</label><div class="ld-val">${escapeHtml(d.region || '\u2014')}</div></div>
+          <div class="ld-field"><label>State/Province</label><div class="ld-val">${escapeHtml(d.state_abbr || '\u2014')}</div></div>
+          <div class="ld-field"><label>Type</label><div class="ld-val">${escapeHtml(d.suggested_type || '\u2014')}</div></div>
+        </div>
+        <div class="ld-fit-box">
+          <span class="ld-fit-score ${fitClass(d.tecsys_fit && d.tecsys_fit.score)}">${escapeHtml((d.tecsys_fit && d.tecsys_fit.score) || 'Unclear')} fit</span>
+          <div class="ld-fit-rationale">${escapeHtml((d.tecsys_fit && d.tecsys_fit.rationale) || '')}</div>
+        </div>
+        <div class="ld-sdr-line">SDR assigned: ${sdrBadge}</div>
+        ${d.confidence_notes ? `<div class="ld-notes">Note: ${escapeHtml(d.confidence_notes)}</div>` : ''}
+        <div class="ld-card-actions">
+          <button class="ld-copy-btn" id="ld-copy-${idx}">Copy for HubSpot</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function copyDossier(d) {
+    const sdr = d.assigned_sdr || d.assignment_note || 'Unassigned';
+    const text = [
+      `Company: ${d.company_name || ''}`,
+      `Website: ${d.website_url || ''}`,
+      `LinkedIn: ${d.linkedin_url || ''}`,
+      `Synopsis: ${d.synopsis || ''}`,
+      `Industry: ${d.industry || ''}`,
+      `Vertical: ${d.vertical || ''}`,
+      `Sub-vertical: ${d.sub_vertical || ''}`,
+      `HQ Location: ${d.hq_location || ''}`,
+      `Region: ${d.region || ''}`,
+      `State/Province: ${d.state_abbr || ''}`,
+      `Tecsys Fit: ${(d.tecsys_fit && d.tecsys_fit.score) || ''} -- ${(d.tecsys_fit && d.tecsys_fit.rationale) || ''}`,
+      `Type: ${d.suggested_type || ''}`,
+      `SDR Assigned: ${sdr}`
+    ].join('\n');
+    navigator.clipboard.writeText(text).catch(() => {});
+  }
+
+  function extractJson(content) {
+    const texts = content.filter(b => b.type === 'text').map(b => b.text);
+    for (let i = texts.length - 1; i >= 0; i--) {
+      let t = texts[i].trim();
+      t = t.replace(/^```json/i, '').replace(/^```/, '').replace(/```$/, '').trim();
+      const start = t.indexOf('{');
+      const end = t.lastIndexOf('}');
+      if (start !== -1 && end !== -1 && end > start) {
+        const candidate = t.slice(start, end + 1);
+        try { return JSON.parse(candidate); } catch (e) { /* try next */ }
+      }
+    }
+    return null;
+  }
+
+  async function research(url) {
+    stashCurrentSectorText();
+    const taxonomyTree = parseTaxonomy(config.taxonomy);
+
+    const systemPrompt = `You are a B2B sales research assistant. Given a company website or LinkedIn URL, use web search to research the company, then output ONLY a single raw JSON object -- no markdown fences, no preamble, no text before or after it.
+
+STEP 1 -- Competitor check (do this BEFORE anything else):
+Check whether the company is a competitor of Tecsys: ${config.competitors}. Also treat as a competitor any company you determine through research clearly sells competing warehouse management, order management, ERP, or supply chain execution software (even if not on that named list).
+
+If it IS a competitor:
+- Set "tecsys_fit": { "score": "Competitor", "rationale": "<which product/offering competes with Tecsys>" }
+- Set "industry", "vertical", and "sub_vertical" all to "Other" -- do NOT classify a competitor's own business taxonomy (e.g. Oracle is a software company, not a "Distribution" account, even though its customers are distributors).
+- Set "suggested_type" to "Competitor".
+- Still resolve "company_name", "synopsis", "website_url", "linkedin_url", "hq_location", "state_abbr" normally.
+- Explain the competitor determination in "confidence_notes" as well.
+
+If it is NOT a competitor, proceed to steps 2+ normally using the ICP criteria and taxonomy below.
+
+JSON shape (all fields required, use "" or "Unclear" if genuinely unknown):
+{
+  "company_name": string,
+  "synopsis": string (2-3 plain-English sentences on what the company does),
+  "website_url": string (the company's official website homepage URL -- if the input was already a website URL, confirm/normalize it; if the input was a LinkedIn URL, find the real company website via search),
+  "linkedin_url": string (the company's LinkedIn company page URL -- if the input was already a LinkedIn URL, confirm/normalize it; if the input was a website URL, find the matching LinkedIn company page via search; use "" only if none can be found),
+  "industry": string (pick EXACTLY one value from this HubSpot picklist, verbatim: ${JSON.stringify(config.hubspotIndustries)} -- unless this is a competitor, see Step 1),
+  "vertical": string (pick EXACTLY one value from the taxonomy below, nested under the industry you chose -- unless this is a competitor, see Step 1),
+  "sub_vertical": string (pick EXACTLY one value from the taxonomy below, nested under the vertical you chose -- unless this is a competitor, see Step 1),
+  "hq_location": string (city, state/province, country),
+  "region": string (pick EXACTLY one of: "North America", "Europe", "Rest of World" -- based on where the company is headquartered),
+  "state_abbr": string (2-3 letter US state or Canadian province abbreviation of the company's HQ, e.g. "CA", "ON" -- leave "" if HQ is outside the US/Canada),
+  "tecsys_fit": { "score": "Strong" | "Moderate" | "Weak" | "Unclear" | "Competitor", "rationale": string (1-2 sentences) },
+  "suggested_type": string (pick EXACTLY one value from this HubSpot Type picklist, verbatim: ${JSON.stringify(config.typeOptions)} -- unless this is a competitor, see Step 1),
+  "confidence_notes": string (flag anything uncertain -- site unreachable, sparse info, HQ outside US/Canada so no SDR table applies, no clean taxonomy match, competitor determination, etc.)
+}
+
+The "industry" field MUST be one of these exact HubSpot values (case-sensitive): ${JSON.stringify(config.hubspotIndustries)}.
+
+"suggested_type" MUST be one of the exact Type values listed above. Note that "Customer" is deliberately NOT in this list -- that value is set internally based on whether an opportunity/deal exists on the record, so never suggest it. For a brand-new, non-competitor company being researched for the first time with no existing relationship, "Prospect" is usually correct unless the research clearly points to something more specific (e.g. "Vendor", "Partner", "Media").
+
+Regardless of which type of URL was given as input (company website or LinkedIn company page), always resolve and return BOTH "website_url" and "linkedin_url" using search -- one confirms the input, the other is the counterpart you need to find.
+
+Industry -> Vertical -> Sub-Vertical taxonomy (this is the exact, complete HubSpot picklist structure -- "vertical" must be a key nested under the chosen "industry", and "sub_vertical" must be one of the values in that vertical's list):
+${JSON.stringify(taxonomyTree, null, 2)}
+
+If nothing in the taxonomy cleanly fits, use the closest-fit rule (see Industry classification rules below) rather than defaulting to "Other" -- for a physical-product company with no obvious match, "Distribution" / "General Wholesale" / "General" is the intended catch-all. Only use "Other" when there is truly no reasonable fit anywhere in the taxonomy. Explain any imperfect match in confidence_notes.
+
+Industry classification rules (only apply if NOT a competitor):
+${config.rules}
+
+Use this ICP / fit criteria to assess tecsys_fit (only apply if NOT a competitor):
+${config.icp}
+
+If the URL can't be accessed, still return best-effort JSON based on search results, and explain the gap in confidence_notes.
+
+Tecsys's active markets are North America and Europe. If "region" is "Rest of World" (HQ outside both), set "suggested_type" to "Out of Geo" regardless of what Step 1/other rules would otherwise suggest, since this is outside Tecsys's focus.`;
+
+    const response = await fetch("/api/research", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemPrompt: systemPrompt,
+        url: url
+      })
+    });
+
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => ({}));
+      throw new Error(errBody.error || `API error (${response.status})`);
+    }
+    const data = await response.json();
+    const parsed = extractJson(data.content || []);
+    if (!parsed) throw new Error("Could not parse a result from the research. Try again.");
+    return parsed;
+  }
+
+  async function onGo() {
+    const url = $('ld-url-input').value.trim();
+    $('ld-error-slot').innerHTML = '';
+    if (!url) {
+      $('ld-error-slot').innerHTML = '<div class="ld-error">Paste a website or LinkedIn URL first.</div>';
+      return;
+    }
+    $('ld-go-btn').disabled = true;
+    $('ld-go-btn').textContent = 'Researching\u2026';
+    $('ld-loading-slot').innerHTML = '<div class="ld-loading-line">Pulling up the site, checking the industry, sizing up fit\u2026</div>';
+
+    try {
+      const result = await research(url);
+      result.source_url = url;
+      result.timestamp = new Date().toLocaleString();
+      validateAndFixTaxonomy(result, parseTaxonomy(config.taxonomy), config.hubspotIndustries);
+      const assignment = await resolveAssignment(result);
+      result.assigned_sdr = assignment.sdr;
+      result.assignment_note = assignment.note;
+      dossiers.unshift(result);
+      await persistDossiers();
+      renderDossiers();
+      $('ld-url-input').value = '';
+    } catch (err) {
+      $('ld-error-slot').innerHTML = `<div class="ld-error">${escapeHtml(err.message || 'Something went wrong.')}</div>`;
+    } finally {
+      $('ld-loading-slot').innerHTML = '';
+      $('ld-go-btn').disabled = false;
+      $('ld-go-btn').textContent = 'Research';
+    }
+  }
+
+  $('ld-go-btn').onclick = onGo;
+  $('ld-url-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') onGo(); });
+
+  loadConfig().then(loadDossiers);
+})();
+</script>
+</body>
+</html>
